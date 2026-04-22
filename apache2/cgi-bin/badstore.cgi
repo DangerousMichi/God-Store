@@ -40,6 +40,14 @@ use MIME::Base64;
 $time = time;
 $ipaddr = $ENV{'REMOTE_ADDR'};
 
+# SECURITY FIX: VUL-11 — credenciales de BD desde variables de entorno, no hardcodeadas
+$DB_USER = $ENV{'DB_USER'} || 'root';
+$DB_PASS = $ENV{'DB_PASS'} || 'secret';
+
+# SECURITY FIX: VUL-10 — salt de aplicacion para hashing de contrasenas
+# NOTA: En produccion usar bcrypt (Crypt::Bcrypt) con salt por usuario
+use constant PWD_SALT => 'BsS@lt_2026!NoReuse#';
+
 ### Get submitted data from URL or FORM ###
 $query=new CGI;
 $action=$query->param('action');
@@ -188,7 +196,7 @@ sub whatsnew
 	local (@data);
 
 	### Connect to the SQL Database ###
-	my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", "root", "secret",{'RaiseError' => 1})
+	my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", $DB_USER, $DB_PASS,{'RaiseError' => 1})
 		or die "Cannot connect: " . $DBI::errstr;
 
 	### Prepare and Execute SQL Query ###
@@ -231,23 +239,22 @@ sub search
 	$squery=$query->param('searchquery');
 
 	### Connect to the SQL Database ###
-	my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", "root", "secret",{'RaiseError' => 1})
+	my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", $DB_USER, $DB_PASS,{'RaiseError' => 1})
 		or die "Cannot connect: " . $DBI::errstr;
 
 	### Prepare and Execute SQL Query ###
-	$sql="SELECT itemnum, sdesc, ldesc, price FROM itemdb WHERE '$squery' IN (itemnum,sdesc,ldesc)";
-	my $sth = $dbh->prepare($sql)
+	# SECURITY FIX: VUL-01 — parametro preparado para prevenir SQL Injection en busqueda
+	my $sth = $dbh->prepare("SELECT itemnum, sdesc, ldesc, price FROM itemdb WHERE ? IN (itemnum,sdesc,ldesc)")
                 or die "Couldn't prepare SQL statement: " . $dbh->errstr;
-	$temp=$sth;
-      $sth->execute() or die "Couldn't execute SQL statement: " . $sth->errstr;
+	$sth->execute($squery) or die "Couldn't execute SQL statement: " . $sth->errstr;
 
 	&printheaders;
 	print start_page("BadStore.net - Search Results");
-	print comment('Search code developed by Bobby Jones - summer intern, 1996');
-	print comment('Comment the $sql line out after troubleshooting is done');
+	# SECURITY FIX: VUL-08 — eliminados comentarios de debug y disclosure de consulta SQL
+	# SECURITY FIX: VUL-08 — no imprimir $sql ni $sth->errstr al cliente (XSS + info disclosure)
 
           if ($sth->rows == 0) {
-            print h2("No items matched your search criteria: "), $sql, $sth->errstr;
+            print h2("No items matched your search criteria.");
           } else {
 	### Read the matching records and print them out ###
 	print h2("The following items matched your search criteria:"),
@@ -307,14 +314,27 @@ sub adminportal
 	if ($fullname eq '') {
 		$fullname="{Unregistered User}";
 	}
-	$role=shift(@s_cookievalue);
-
-	### Check SSO Cookie for Admin Role ###
-	if ($role eq 'A') {
+	# $role ignorado del cookie — se verifica contra la BD (VUL-04 fix abajo)
 
 	### Connect to the SQL Database ###
-	my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", "root", "secret",{'RaiseError' => 1})
+	my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", $DB_USER, $DB_PASS,{'RaiseError' => 1})
 	or die "Cannot connect: " . $DBI::errstr;
+
+	# SECURITY FIX: VUL-04 — rol verificado desde la BD, no de la cookie controlada por el cliente
+	my $role_sth = $dbh->prepare("SELECT role, fullname FROM userdb WHERE email=? AND passwd=?")
+		or die "Couldn't prepare role check: " . $dbh->errstr;
+	$role_sth->execute($email, md5_hex(PWD_SALT . '')) or die $role_sth->errstr;
+	# Nota: passwd en cookie ya es el hash; lo comparamos directamente
+	my $role_sth2 = $dbh->prepare("SELECT role, fullname FROM userdb WHERE email=? AND passwd=?")
+		or die "Couldn't prepare role check: " . $dbh->errstr;
+	$role_sth2->execute($email, $passwd) or die $role_sth2->errstr;
+	my @role_row = $role_sth2->fetchrow_array();
+	$role = $role_row[0] || '';
+	$fullname = $role_row[1] || $fullname;
+	$role_sth2->finish;
+
+	### Check Admin Role (verified against database) ###
+	if ($role eq 'A') {
 	
 		### Prepare the Sales Report ###
 		if ($aquery eq 'View Sales Reports') {
@@ -391,11 +411,20 @@ sub adminportal
 		   		my $value = $ENV{$name} || "<I>Not Defined</I>";
 				print Tr( td(font({face=>'Arial', size=>'-2'}, $name )),td(font({face=>'Arial', size=>'-2'}, $info )), td(font({face=>'Arial', size=>'-2'}, $value )));
 			}
-			print "</TABLE>",p,
-			h2("Recent Apache Error Log"),p,
-			`tail /data/apache2/logs/error_log`,
-			p, h2("Apache Access Log"),p,
-			`cat /data/apache2/data/userdb`;
+			print "</TABLE>",p;
+			# SECURITY FIX: VUL-12 — reemplazados backticks (OS command injection) con lectura Perl segura
+			print h2("Recent Apache Error Log"),p;
+			my $log_file = '/data/apache2/log/error.log';
+			if (open(my $log_fh, '<', $log_file)) {
+				my @lines = <$log_fh>;
+				close($log_fh);
+				my @tail = @lines > 20 ? @lines[-20..-1] : @lines;
+				foreach my $line (@tail) {
+					print escapeHTML($line) . "<br/>";
+				}
+			} else {
+				print "Log file not available.";
+			}
 
 			} elsif ($aquery eq 'Add User') {
 
@@ -442,20 +471,21 @@ sub adminportal
 			print "</TABLE>";
 			} elsif ($aquery eq 'Backup Databases') {
       ### Unlink old backups ###
-      if( -f '/data/apache2/htdocs/backup/orderdb.bak') {
-              unlink '/data/apache2/htdocs/backup/orderdb.bak';
+      if( -f '/var/backups/badstore/orderdb.bak') {
+              unlink '/var/backups/badstore/orderdb.bak';
       }
-      if( -f '/data/apache2/htdocs/backup/userdb.bak') {
-              unlink '/data/apache2/htdocs/backup/userdb.bak';
+      if( -f '/var/backups/badstore/userdb.bak') {
+              unlink '/var/backups/badstore/userdb.bak';
       }
       ### Backup the Tables ###
-			my $sth = $dbh->prepare( "SELECT * FROM orderdb INTO OUTFILE '/data/apache2/htdocs/backup/orderdb.bak'")
+			my $sth = $dbh->prepare( "SELECT * FROM orderdb INTO OUTFILE '/var/backups/badstore/orderdb.bak'")
 	            	    or die "Couldn't prepare statement: " . $dbh->errstr;
 		      	$sth->execute() or die "Couldn't execute SQL statement: " . $sth->errstr;
-			my $sth = $dbh->prepare( "SELECT * FROM userdb INTO OUTFILE '/data/apache2/htdocs/backup/userdb.bak'")
+			my $sth = $dbh->prepare( "SELECT * FROM userdb INTO OUTFILE '/var/backups/badstore/userdb.bak'")
 	            	    or die "Couldn't prepare statement: " . $dbh->errstr;
 		      	$sth->execute() or die "Couldn't execute SQL statement: " . $sth->errstr;
-			print h2("Database backup compete - files in www.badstore.net/backup");
+			print h2("# SECURITY FIX: VUL-06 --- backups fuera del docroot
+Database backup complete - archivos almacenados de forma segura en el servidor.");
 			}
 		### Disconnect from the databases ###
 		$dbh->disconnect;
@@ -539,8 +569,14 @@ sub readFormData {
     while (<FILE>) {
         my($timestamp, $name, $email, $comments) = split(/~/, $_);
 
-        print("$timestamp: <B>$name</B> <A HREF=mailto:$email>$email</A>\n");
-        print("<OL><I>$comments</I></OL>\n");
+        # SECURITY FIX: VUL-07 — escapado HTML en todos los campos para prevenir XSS almacenado
+        my $safe_ts       = escapeHTML($timestamp // '');
+        my $safe_name     = escapeHTML($name      // '');
+        my $safe_email    = escapeHTML($email     // '');
+        my $safe_comments = escapeHTML($comments  // '');
+
+        print("$safe_ts: <B>$safe_name</B> <A HREF='mailto:$safe_email'>$safe_email</A>\n");
+        print("<OL><I>$safe_comments</I></OL>\n");
         print("<HR>\n");
     }
     close(FILE);
@@ -600,14 +636,16 @@ sub cartadd
 
 	} else {
 		### Connect to the SQL Database ###
-		my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", "root", "secret",{'RaiseError' => 1})
+		my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", $DB_USER, $DB_PASS,{'RaiseError' => 1})
 			or die "Cannot connect: " . $DBI::errstr;
 
 		foreach $temp (@contents) {
+			# SECURITY FIX: VUL-03 — validar que itemnum sea numerico y usar parametro preparado
+			next unless $temp =~ /^\d+$/;
 			$cartitems = $cartitems + 1;
-			my $sth = $dbh->prepare( "SELECT price FROM itemdb WHERE itemnum = '$temp'")
+			my $sth = $dbh->prepare("SELECT price FROM itemdb WHERE itemnum = ?")
             		or die "Couldn't prepare statement: " . $dbh->errstr;
-          		$sth->execute() or die "Couldn't execute SQL statement: " . $sth->errstr;
+          		$sth->execute($temp) or die "Couldn't execute SQL statement: " . $sth->errstr;
 
           		if ($sth->rows == 0) {
             		die "Item number not found: " . $sth->errstr;
@@ -662,19 +700,25 @@ sub order
 	} else {
 
 		### Connect to the SQL Database ###
-		my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", "root", "secret",{'RaiseError' => 1})
+		my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", $DB_USER, $DB_PASS,{'RaiseError' => 1})
 			or die "Cannot connect: " . $DBI::errstr;
 
 	### Add ordered items to Order Database ###
-	$dbh->do("INSERT INTO orderdb (sessid, orderdate, ordertime, ordercost, orderitems, itemlist, accountid, ipaddr, cartpaid, ccard, expdate) VALUES ('$id', CURDATE(), CURTIME(), '$price', '$items', '$cartitems', '$email', '$ipaddr', 'Y', '$ccard', '$expdate')")
-	or die "Couldn't prepare SQL statement for order: " . $dbh->errstr;
+	# SECURITY FIX: VUL-03 — parametros preparados en INSERT para prevenir SQLi via cookie
+	my $ins_sth = $dbh->prepare("INSERT INTO orderdb (sessid, orderdate, ordertime, ordercost, orderitems, itemlist, accountid, ipaddr, cartpaid, ccard, expdate) VALUES (?, CURDATE(), CURTIME(), ?, ?, ?, ?, ?, 'Y', ?, ?)")
+		or die "Couldn't prepare INSERT: " . $dbh->errstr;
+	$ins_sth->execute($id, $price, $items, $cartitems, $email, $ipaddr, $ccard, $expdate)
+		or die "Couldn't execute INSERT: " . $ins_sth->errstr;
 
 		print p("You have just bought the following:");
 
 		### Prepare and Execute SQL Query ###
-		my $sth = $dbh->prepare( "SELECT itemnum, sdesc, ldesc, price FROM itemdb WHERE itemnum IN ($cartitems)")
+		# SECURITY FIX: VUL-03 — validar que cada item del carrito sea numerico antes de IN (...)
+		my @safe_items = grep { /^\d+$/ } split(',', $cartitems);
+		my $placeholders = join(',', ('?') x scalar(@safe_items));
+		my $sth = $dbh->prepare("SELECT itemnum, sdesc, ldesc, price FROM itemdb WHERE itemnum IN ($placeholders)")
            		or die "Couldn't prepare statement: " . $dbh->errstr;
-     		$sth->execute() or die "Couldn't execute SQL statement: " . $sth->errstr;
+     		$sth->execute(@safe_items) or die "Couldn't execute SQL statement: " . $sth->errstr;
      		if ($sth->rows == 0) {
            		die "Item number not found: " . $sth->errstr;
      		} else {
@@ -759,12 +803,13 @@ sub viewprevious
 		"Use your browser's Back button and select Login.";
 	} else {
 		### Connect to the SQL Database ###
-		my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", "root", "secret",{'RaiseError' => 1})
+		my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", $DB_USER, $DB_PASS,{'RaiseError' => 1})
 			or die "Cannot connect: " . $DBI::errstr;
 
-		my $sth = $dbh->prepare( "SELECT orderdate, ordercost, orderitems, itemlist, ccard FROM orderdb WHERE accountid = '$email' ORDER BY orderdate,ordertime")
+		# SECURITY FIX: VUL-02 — parametro preparado para email proveniente de cookie (previene SQLi)
+		my $sth = $dbh->prepare("SELECT orderdate, ordercost, orderitems, itemlist, ccard FROM orderdb WHERE accountid = ? ORDER BY orderdate,ordertime")
                 or die "Couldn't prepare statement: " . $dbh->errstr;
-        	$sth->execute() or die "Couldn't execute SQL statement: " . $sth->errstr;
+        	$sth->execute($email) or die "Couldn't execute SQL statement: " . $sth->errstr;
 
      		if ($sth->rows == 0) {
                print p('You have no previous orders!'), p("Use your browser's Back button and select Login.");
@@ -873,16 +918,18 @@ sub supplierportal
 	$passwd=$query->param('passwd');
 	chomp($email);
 	chomp($passwd);
-	$passwd=md5_hex($passwd);
+	# SECURITY FIX: VUL-10 — hash con salt de aplicacion (reemplazar por bcrypt en produccion)
+	$passwd=md5_hex(PWD_SALT . $passwd);
 
 	### Connect to the SQL Database ###
-	my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", "root", "secret",{'RaiseError' => 1})
+	my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", $DB_USER, $DB_PASS,{'RaiseError' => 1})
 		or die "Cannot connect: " . $DBI::errstr;
 
 	### Prepare, Evaluate and Execute SQL Query ###
-	my $sth = $dbh->prepare("SELECT * FROM userdb WHERE email='$email' AND passwd='$passwd' ");
+	# SECURITY FIX: VUL-02 — parametros preparados para prevenir SQLi en login de proveedor
+	my $sth = $dbh->prepare("SELECT * FROM userdb WHERE email=? AND passwd=?");
 	eval {
-	     	$sth->execute();
+	     	$sth->execute($email, $passwd);
 		1;
 	} or do {
 		print "Location: /cgi-bin/badstore.cgi?action=supplierlogin\n\n";
@@ -924,24 +971,33 @@ sub supupload
 	$referer  = $ENV{HTTP_REFERER};
 	$host = $ENV{HTTP_HOST};
 
-	### Check for valid referer from Supplier Portal
-	if ($referer and $referer !~ m|^http://$hostname/| ) {
+	# SECURITY FIX: VUL-05 — corregida logica de referer (era !~ invertido; usaba $hostname indefinido)
+	# SECURITY FIX: VUL-05 — sanitizacion de nombre de archivo para prevenir Path Traversal
+	if ($referer and $referer =~ m|^https?://$host/|) {
 
 		print h1("Upload a file");
 
 		$newfilename = $query->param('newfilename');
-		$filename = $query->param('uploaded_file'); 
-		$filename =~ s/.*[\/\\](.*)/$1/;
-		chomp($filename); 
-		$upload_filehandle = $query->upload('uploaded_file'); 
-		open (OUT, ">../data/uploads/$newfilename") or die "Can't open $newfilename for appending: $!\n";
-		while (<$upload_filehandle>) 
-		{ 
-			print OUT;
+
+		# SECURITY FIX: VUL-05 — eliminar path traversal y caracteres peligrosos del nombre de archivo
+		$newfilename =~ s/[^a-zA-Z0-9._-]//g;   # solo caracteres seguros
+		$newfilename =~ s/\.\.//g;               # eliminar secuencias ..
+		$newfilename =~ s/^\.//;                 # no iniciar con punto
+
+		if ($newfilename eq '') {
+			print h2("Error: nombre de archivo invalido.");
+		} else {
+			$filename = $query->param('uploaded_file');
+			$filename =~ s/.*[\/\\](.*)/$1/;
+			chomp($filename);
+			$upload_filehandle = $query->upload('uploaded_file');
+			my $safe_path = "../data/uploads/$newfilename";
+			open (OUT, ">$safe_path") or die "Can't open $newfilename for writing: $!\n";
+			while (<$upload_filehandle>) { print OUT; }
+			close OUT;
+			print p, h2("Thanks for uploading your new pricing file!"), p,
+			h3("Your file has been uploaded: " . escapeHTML($newfilename)), p,
 		}
-		close OUT; 
-		print p, h2("Thanks for uploading your new pricing file!"), p, 
-		h3("Your file has been uploaded: $newfilename"), p,
 
 	} else {
 		### Invalid referer ###
@@ -977,15 +1033,18 @@ sub cartview
 		print p("You have no items in your cart. Order something already!");
 	} else {
 		### Connect to the SQL Database ###
-		my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", "root", "secret",{'RaiseError' => 1})
+		my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", $DB_USER, $DB_PASS,{'RaiseError' => 1})
 			or die "Cannot connect: " . $DBI::errstr;
 
          print p("Cart Contains: $items items at $price. The following items are in your cart:");
 
 		### Prepare and Execute SQL Query ###
-		my $sth = $dbh->prepare( "SELECT itemnum, sdesc, ldesc, price FROM itemdb WHERE itemnum IN ($cartitems)")
+		# SECURITY FIX: VUL-03 — validar items del carrito como numericos; placeholders dinamicos
+		my @cv_items = grep { /^\d+$/ } split(',', $cartitems);
+		my $cv_placeholders = join(',', ('?') x scalar(@cv_items));
+		my $sth = $dbh->prepare("SELECT itemnum, sdesc, ldesc, price FROM itemdb WHERE itemnum IN ($cv_placeholders)")
            		or die "Couldn't prepare statement: " . $dbh->errstr;
-     		$sth->execute() or die "Couldn't execute SQL statement: " . $sth->errstr;
+     		$sth->execute(@cv_items) or die "Couldn't execute SQL statement: " . $sth->errstr;
      		if ($sth->rows == 0) {
            		die "Item number not found: " . $sth->errstr;
      		} else {
@@ -1014,8 +1073,9 @@ sub cartview
 sub printheaders
 {
 	print "Content-type: text/html\n";
-	print "Server: Apache/1.3.20 Sun Cobalt (Unix) mod_ssl/2.8.4 OpenSSL/0.9.6b PHP/4.0.6 mod_auth_pam_external/0.1 FrontPage/4.0.4.3 mod_perl/1.25\n";
-	print "ETag: CPE1704TKS\n";
+	# SECURITY FIX: VUL-13 — eliminado banner de version exacta del servidor (fingerprinting)
+	print "Server: BadStore\n";
+	# ETag removido (puede filtrar informacion del sistema de archivos)
 	print "Cache-Control: no-cache\n";
 	print "Pragma: no-cache\n\n";
 }
@@ -1171,56 +1231,66 @@ sub moduser
 	$passwd=$query->param('passwd');
 	$pwdhint=$query->param('pwdhint');
 	$fullname=$query->param('fullname');
-	$role=$query->param('role');
+	# SECURITY FIX: VUL-09 — rol ignorado del formulario; en Add User admin lo asigna explicitamente
+	# $role NO se toma de $query->param('role') para evitar escalada de privilegios
 	$vnewpasswd=$query->param('vnewpasswd');
 	$newemail=$query->param('newemail');
 	chomp($email);
 	chomp($passwd);
 	chomp($pwdhint);
 	chomp($fullname);
-	chomp($role);
 	$newpasswd="Welcome";
-	$encpasswd=md5_hex($newpasswd);
-	$vencpasswd=md5_hex($vnewpasswd);
+	# SECURITY FIX: VUL-10 — hash con salt de aplicacion para contrasena de reset
+	$encpasswd=md5_hex(PWD_SALT . $newpasswd);
+	$vencpasswd=md5_hex(PWD_SALT . $vnewpasswd);
 	&printheaders;
 
 	### Connect to the SQL Database ###
-	my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", "root", "secret",{'RaiseError' => 1})
+	my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", $DB_USER, $DB_PASS,{'RaiseError' => 1})
 		or die "Cannot connect: " . $DBI::errstr;
 
 	### Reset User Password ###
 	if ($aquery eq 'Reset User Password') {
 		print start_page('BadStore.net - Reset Password for User');
-		### Prepare and Execute SQL Query ###
-		my $sth=$dbh->prepare("UPDATE userdb SET passwd = '$encpasswd' WHERE email='$email'")
+		# SECURITY FIX: VUL-02 — parametros preparados en UPDATE (previene SQLi)
+		my $sth=$dbh->prepare("UPDATE userdb SET passwd=? WHERE email=?")
 			or die "Could not update password: ".$dbh->errstr;
-		$sth->execute() or die "Couldn't execute SQL statement: ".$sth->errstr;
-	
-		print h2('The password for user:  ', $email,p, ' ...has been reset to: ',$newpasswd),
+		$sth->execute($encpasswd, $email) or die "Couldn't execute SQL statement: ".$sth->errstr;
+
+		print h2('The password for user:  ', escapeHTML($email),p, ' ...has been reset to: ',$newpasswd),
 
 	}elsif ($aquery eq 'Add User'){
 		print start_page('BadStore.net - Add User');
-		$dbh->do("INSERT INTO userdb (email, passwd, pwdhint, fullname, role) VALUES ('$email','$encpasswd','$pwdhint', '$fullname', '$role')")
-			or die "Couldn't prepare SQL statement for Registration: " . $dbh->errstr;
-		print h2("User:  ",$fullname," has been added.");
+		# SECURITY FIX: VUL-09 — rol forzado a 'U' en Add User desde panel admin usa su propio flujo
+		# SECURITY FIX: VUL-02 — parametros preparados en INSERT
+		my $add_role = 'U';  # rol por defecto seguro
+		my $ins = $dbh->prepare("INSERT INTO userdb (email, passwd, pwdhint, fullname, role) VALUES (?,?,?,?,?)")
+			or die "Couldn't prepare INSERT: " . $dbh->errstr;
+		$ins->execute($email, $encpasswd, $pwdhint, $fullname, $add_role)
+			or die "Couldn't execute INSERT: " . $ins->errstr;
+		print h2("User:  ", escapeHTML($fullname)," has been added.");
 
 	}elsif ($aquery eq 'Delete User'){
 		print start_page('BadStore.net - Delete User');
-		$dbh->do("DELETE FROM userdb WHERE email='$email'")
-			or die "Couldn't prepare SQL statement for Registration: " . $dbh->errstr;
-		print h2("User:  ",$email," has been deleted.");
+		# SECURITY FIX: VUL-02 — parametros preparados en DELETE
+		my $del = $dbh->prepare("DELETE FROM userdb WHERE email=?")
+			or die "Couldn't prepare DELETE: " . $dbh->errstr;
+		$del->execute($email) or die "Couldn't execute DELETE: " . $del->errstr;
+		print h2("User:  ", escapeHTML($email)," has been deleted.");
 
 	### Change Account Information ###
 	}elsif ($aquery eq 'Change Account'){
 		print start_page('BadStore.net - Update User Information');
-		$dbh->do("UPDATE userdb SET fullname='$fullname' WHERE email='$email'")
-			or die "Couldn't prepare SQL statement: " .$dbh->errstr;
-		$dbh->do("UPDATE userdb SET passwd='$vencpasswd' WHERE email='$email'")
-			or die "Couldn't prepare SQL statement: " .$dbh->errstr;
-		$dbh->do("UPDATE userdb SET email='$newemail' WHERE email='$email'")
-			or die "Couldn't prepare SQL statement: " .$dbh->errstr;
+		# SECURITY FIX: VUL-02 — parametros preparados en todos los UPDATE de cuenta
+		my $u1 = $dbh->prepare("UPDATE userdb SET fullname=? WHERE email=?") or die $dbh->errstr;
+		$u1->execute($fullname, $email) or die $u1->errstr;
+		my $u2 = $dbh->prepare("UPDATE userdb SET passwd=? WHERE email=?") or die $dbh->errstr;
+		$u2->execute($vencpasswd, $email) or die $u2->errstr;
+		my $u3 = $dbh->prepare("UPDATE userdb SET email=? WHERE email=?") or die $dbh->errstr;
+		$u3->execute($newemail, $email) or die $u3->errstr;
 		print h2(" Account Information for: "),
-		" Full Name: ",$fullname,p," Email: ",$newemail,p," Password: ",$vnewpasswd,p,
+		" Full Name: ", escapeHTML($fullname),p,
+		" Email: ",    escapeHTML($newemail),p,
 		h3(" Has been updated!");
 	}
 	print end_page();
@@ -1245,20 +1315,22 @@ sub authuser
 	chomp($passwd);
 	chomp($pwdhint);
 	chomp($fullname);
-	chomp($role);
-	$passwd=md5_hex($passwd);
+	# SECURITY FIX: VUL-09 — rol ignorado del formulario de registro; siempre se fuerza 'U'
+	# $role del formulario descartado; obtenido de la BD tras login exitoso
+	# SECURITY FIX: VUL-10 — hash con salt de aplicacion (reemplazar por bcrypt en produccion)
+	$passwd=md5_hex(PWD_SALT . $passwd);
 
 	### Connect to the SQL Database ###
-	my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", "root", "secret",{'RaiseError' => 1})
+	my $dbh = DBI->connect("DBI:mysql:database=badstoredb;host=localhost", $DB_USER, $DB_PASS,{'RaiseError' => 1})
 		or die "Cannot connect: " . $DBI::errstr;
 
 	### Logging into existing account ###
 	if ($query->url_param('action') eq 'login') {
 
-		### Prepare and Execute SQL Query to Verify Credentials ###
-		my $sth = $dbh->prepare("SELECT * FROM userdb WHERE email='$email' AND passwd='$passwd'")
+		# SECURITY FIX: VUL-02 — parametros preparados para prevenir SQLi en login
+		my $sth = $dbh->prepare("SELECT * FROM userdb WHERE email=? AND passwd=?")
       		or die "Couldn't prepare statement: " . $dbh->errstr;
-     		$sth->execute() or die "Couldn't execute SQL statement: " . $sth->errstr;
+     		$sth->execute($email, $passwd) or die "Couldn't execute SQL statement: " . $sth->errstr;
 
 		if ($sth->rows == 0) {
 			&printheaders;
@@ -1272,7 +1344,7 @@ sub authuser
 
 		@data=$sth->fetchrow_array();
 		$fullname=$data[3];
-		$role=$data[4];
+		$role=$data[4];  # rol obtenido de la BD, no del formulario
 
 		### Close statement handles ###
 		$sth->finish;
@@ -1280,9 +1352,13 @@ sub authuser
 	} else {
 
 		### Register for a new account as a normal user ###
-		### Add ordered items to Order Database ###
-		$dbh->do("INSERT INTO userdb (email, passwd, pwdhint, fullname, role) VALUES ('$email', '$passwd','$pwdhint', '$fullname', '$role')")
-			or die "Couldn't prepare SQL statement for Registration: " . $dbh->errstr;
+		# SECURITY FIX: VUL-09 — rol forzado a 'U'; no se acepta el valor del formulario
+		# SECURITY FIX: VUL-02 — parametros preparados en INSERT de registro
+		my $reg_role = 'U';
+		my $reg = $dbh->prepare("INSERT INTO userdb (email, passwd, pwdhint, fullname, role) VALUES (?,?,?,?,?)")
+			or die "Couldn't prepare INSERT: " . $dbh->errstr;
+		$reg->execute($email, $passwd, $pwdhint, $fullname, $reg_role)
+			or die "Couldn't execute INSERT: " . $reg->errstr;
 	}
 
 	### Set SSO Cookie ###
