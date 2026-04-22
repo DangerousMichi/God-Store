@@ -1,5 +1,28 @@
+      </main><!-- /main -->
+    </div><!-- /bd -->
+
+    <!-- ══ FOOTER ═══════════════════════════════════════════════ -->
+    <footer id="ft" role="contentinfo">
+      <div id="ft-inner">
+
+        <div id="ft-brand">
+          <svg viewBox="0 0 24 24" fill="none" width="20" height="20" aria-hidden="true">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"
+                  stroke="#38bdf8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M9 12l2 2 4-4" stroke="#38bdf8" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          GodStore
+        </div>
+
+        <p id="ft-security">
+          &#x1F512; All transactions are end-to-end verified.
+          Your data is protected under strict security protocols.
+        </p>
+
+        <p id="ft-copy">GodStore &copy; 2026 &mdash; Security-first commerce.</p>
+
       </div>
-    </div>
-    
-    <div id="ft">BadStore v1.2.3s - Copyright &copy; 2004-2005</div>
-  </div>
+    </footer>
+
+  </div><!-- /doc -->
+</div><!-- /gs-wrapper -->

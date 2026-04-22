@@ -1,48 +1,110 @@
-<body> 
-  <div id="doc">
-    <div id="hd">
-      <h1><a href="badstore.cgi">Welcome to Badstore.net</a></h1>        
-      <div id="hdbar">
-        <form method="get" action="badstore.cgi">
-          <p>            
-            <input type="hidden" name="action" value="search" />
-            <input type="text" id="searchquery" name="searchquery" size="10" value="Search" onfocus="(this.value!='Search'||(this.value=''));" onblur="this.value||(this.value='Search');" />
-            <input type="submit" value="Go" />
-          </p>
-        </form>
-        <div id="hdcart">
-          <iframe src="/cgi-bin/bsheader.cgi" height="20" width="370" border="0" frameborder="0" noresize="noresize" style="border:0;margin-top:8px;background-color:transparent"></iframe>          
+<div id="gs-wrapper">
+
+  <!-- ══ TOP NAVIGATION BAR ══════════════════════════════════════ -->
+  <header id="gs-header">
+    <div id="gs-header-inner">
+
+      <!-- Logo -->
+      <a href="/cgi-bin/badstore.cgi" id="gs-logo" aria-label="GodStore home">
+        <svg class="logo-icon" viewBox="0 0 24 24" fill="none" width="28" height="28" aria-hidden="true">
+          <path d="M12 2L3 7v5c0 5.25 3.9 10.15 9 11.35C17.1 22.15 21 17.25 21 12V7l-9-5z"
+                fill="rgba(56,189,248,0.15)" stroke="#38bdf8" stroke-width="1.8"
+                stroke-linejoin="round"/>
+          <path d="M9 12l2.2 2.2L15.4 9.8" stroke="#38bdf8" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>God<span class="logo-icon">Store</span></span>
+      </a>
+
+      <!-- Search bar -->
+      <form method="get" action="/cgi-bin/badstore.cgi" id="gs-search-form" role="search">
+        <input type="hidden" name="action" value="search" />
+        <div id="gs-search-wrap">
+          <svg id="gs-search-icon" viewBox="0 0 24 24" fill="none" width="16" height="16" aria-hidden="true">
+            <circle cx="11" cy="11" r="8" stroke="#64748b" stroke-width="2"/>
+            <path d="M21 21l-4.35-4.35" stroke="#64748b" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <input type="text" name="searchquery" id="gs-searchinput"
+                 placeholder="Search products…" autocomplete="off" aria-label="Search" />
+          <input type="submit" value="Search" id="gs-searchbtn" />
         </div>
-        <p id="cart-link"><a href="badstore.cgi?action=cartview">View Cart</a></p>
-      </div>
+      </form>
+
+      <!-- Right nav -->
+      <nav id="gs-header-nav" aria-label="Account navigation">
+        <a href="/cgi-bin/badstore.cgi?action=myaccount" class="gs-nav-link" title="My Account">
+          <svg viewBox="0 0 24 24" fill="none" width="18" height="18" aria-hidden="true">
+            <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/>
+            <path d="M4 20c0-3.87 3.58-7 8-7s8 3.13 8 7" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          Account
+        </a>
+        <a href="/cgi-bin/badstore.cgi?action=loginregister" class="gs-nav-link" title="Login / Register">
+          <svg viewBox="0 0 24 24" fill="none" width="18" height="18" aria-hidden="true">
+            <rect x="3" y="11" width="18" height="11" rx="2" stroke="currentColor" stroke-width="2"/>
+            <path d="M7 11V7a5 5 0 0110 0v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          Login
+        </a>
+        <a href="/cgi-bin/badstore.cgi?action=cartview" class="gs-nav-link gs-cart-link" title="View Cart">
+          <svg viewBox="0 0 24 24" fill="none" width="18" height="18" aria-hidden="true">
+            <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"
+                  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="3" y1="6" x2="21" y2="6" stroke="currentColor" stroke-width="2"/>
+            <path d="M16 10a4 4 0 01-8 0" stroke="currentColor" stroke-width="2"/>
+          </svg>
+          Cart
+        </a>
+      </nav>
     </div>
+
+    <!-- Cart info strip (iframe) -->
+    <div id="gs-cart-bar">
+      <iframe src="/cgi-bin/bsheader.cgi" height="30" scrolling="no"
+              frameborder="0" title="Cart summary"></iframe>
+    </div>
+  </header>
+
+  <!-- ══ PAGE BODY ════════════════════════════════════════════════ -->
+  <div id="doc">
     <div id="bd">
-      <div id="side">
-        <h3>Shop Badstore.net</h3>
+
+      <!-- ── Sidebar ─────────────────────────────────────────── -->
+      <nav id="side" aria-label="Site navigation">
+
+        <h3>Shop</h3>
         <ul>
-          <li><a href="badstore.cgi">Home</a></li>
-          <li><a href="badstore.cgi?action=whatsnew">What's New</a></li>
-          <li><a href="badstore.cgi?action=guestbook">Sign Our Guestbook</a></li>
-          <li><a href="badstore.cgi?action=viewprevious">View Previous Orders</a></li>
-          <li><a href="badstore.cgi?action=aboutus">About Us</a></li>
-          <li><a href="badstore.cgi?action=myaccount">My Account</a></li>
-          <li><a href="badstore.cgi?action=loginregister">Login / Register</a></li>
+          <li><a href="/cgi-bin/badstore.cgi">Home</a></li>
+          <li><a href="/cgi-bin/badstore.cgi?action=whatsnew">What's New</a></li>
+          <li><a href="/cgi-bin/badstore.cgi?action=guestbook">Guestbook</a></li>
+          <li><a href="/cgi-bin/badstore.cgi?action=viewprevious">My Orders</a></li>
+          <li><a href="/cgi-bin/badstore.cgi?action=aboutus">About Us</a></li>
+          <li><a href="/cgi-bin/badstore.cgi?action=myaccount">My Account</a></li>
+          <li><a href="/cgi-bin/badstore.cgi?action=loginregister">Login / Register</a></li>
         </ul>
-        
-        <h3>Suppliers Only</h3>
+
+        <h3>Suppliers</h3>
         <ul>
-          <li><a href="badstore.cgi?action=supplierlogin">Supplier Login</a></li>
-          <li><a href="/DoingBusiness/contract.doc">Supplier Contract</a></li>
-          <li><a href="badstore.cgi?action=supplierproc">Supplier Procedures</a></li>
+          <li><a href="/cgi-bin/badstore.cgi?action=supplierlogin">Supplier Login</a></li>
+          <li><a href="/cgi-bin/badstore.cgi?action=supplierproc">Procedures</a></li>
+          <li><a href="/DoingBusiness/contract.doc">Contract</a></li>
         </ul>
-        
-        <h3>Reference</h3>
-        <ul>
-          <li>
-            <a href="/BadStore_net_v1_2_Manual.pdf">BadStore.net Manual v1.2</a>
-            <a href="/scanbot/scanbot.html"></a>
-          </li>
-        </ul>
-      </div>
-      
-      <div id="main">
+
+        <!-- Secure shopping widget -->
+        <div id="gs-secure-widget" role="complementary" aria-label="Security information">
+          <svg class="secure-icon" viewBox="0 0 24 24" fill="none" width="36" height="36" aria-hidden="true">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"
+                  fill="rgba(56,189,248,0.12)" stroke="#38bdf8"
+                  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M9 12l2 2 4-4" stroke="#38bdf8"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="secure-label">Secure Shopping</span>
+          <span class="secure-sub">All transactions verified &amp; encrypted</span>
+        </div>
+
+      </nav><!-- /side -->
+
+      <!-- ── Main content (CGI output injected here) ────────── -->
+      <main id="main">
